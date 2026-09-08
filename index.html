@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bedrock</title>
+<meta name="description" content="Bedrock — clone web d'Obsidian, propulsé par l'API GitHub." />
+
+<!-- Third-party libraries (all loaded from CDN, no build step / no external backend) -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
+<style>
+:root{
+  --bg: #0f0e17;
+  --bg-elevated: #161522;
+  --bg-card: #1e1c2e;
+  --border: #2a2740;
+  --text: #e6e2f5;
+  --text-muted: #9a94b8;
+  --accent: #a855f7;
+  --accent-2: #8b5cf6;
+  --accent-3: #6366f1;
+  --glow: 0 0 12px rgba(168, 85, 247, 0.55);
+  --radius: 10px;
+}
+*{box-sizing:border-box;}
+html,body{
+  margin:0;padding:0;height:100%;
+  background:var(--bg);
+  color:var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--bg-card);border-radius:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+a{color:var(--accent);}
+button{font-family:inherit;}
+
+/* ---------- Auth overlay ---------- */
+#auth-overlay{
+  position:fixed;inset:0;z-index:1000;
+  display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(circle at 50% 20%, #1c1930 0%, #0b0a12 70%);
+}
+#auth-overlay.hidden{display:none;}
+.auth-card{
+  width:min(380px, 92vw);
+  background:var(--bg-card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:32px 28px;
+  box-shadow:0 20px 60px rgba(0,0,0,.55), var(--glow);
+}
+.auth-logo{width:64px;height:64px;margin:0 auto 12px;display:block;filter:drop-shadow(0 0 10px rgba(168,85,247,.5));}
+.auth-card h1{text-align:center;margin:0 0 4px;font-size:22px;letter-spacing:.5px;}
+.auth-card p.subtitle{text-align:center;color:var(--text-muted);margin:0 0 22px;font-size:13px;}
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;}
+.field input{
+  width:100%;padding:10px 12px;background:var(--bg-elevated);
+  border:1px solid var(--border);border-radius:8px;color:var(--text);
+  font-size:14px;outline:none;transition:border-color .15s, box-shadow .15s;
+}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,85,247,.18);}
+.auth-error{color:#f87171;font-size:12px;min-height:16px;margin-bottom:8px;}
+.btn{
+  cursor:pointer;border:none;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;
+  background:linear-gradient(135deg, var(--accent-2), var(--accent-3));
+  color:#fff;transition:filter .15s, transform .1s;
+}
+.btn:hover{filter:brightness(1.12);}
+.btn:active{transform:scale(.98);}
+.btn.full{width:100%;}
+.btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+.btn.small{padding:6px 10px;font-size:12px;}
+
+/* ---------- App shell ---------- */
+#app{display:none;height:100vh;flex-direction:column;}
+#app.visible{display:flex;}
+
+#header{
+  height:52px;flex:0 0 auto;display:flex;align-items:center;gap:10px;
+  padding:0 14px;background:var(--bg-elevated);border-bottom:1px solid var(--border);
+  z-index:20;
+}
+#burger{
+  display:none;background:none;border:none;color:var(--text);font-size:20px;cursor:pointer;padding:4px 8px;
+}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px;}
+.brand svg{width:26px;height:26px;filter:drop-shadow(0 0 6px rgba(168,85,247,.6));}
+#sync-indicator{
+  margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);
+}
+#sync-indicator .dot{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 8px #4ade80;}
+#sync-indicator.syncing .dot{background:#facc15;box-shadow:0 0 8px #facc15;animation:pulse 1s infinite;}
+#sync-indicator.error .dot{background:#f87171;box-shadow:0 0 8px #f87171;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+.header-actions{display:flex;gap:8px;align-items:center;}
+#ai-toggle{background:none;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;}
+#ai-toggle:hover{border-color:var(--accent);}
+
+#body-row{flex:1 1 auto;display:flex;min-height:0;position:relative;}
+
+/* ---------- Sidebar (graph/node tree) ---------- */
+#sidebar{
+  width:280px;flex:0 0 auto;background:var(--bg-elevated);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-height:0;transition:transform .2s ease;
+}
+#sidebar .sidebar-header{padding:12px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);}
+#sidebar .sidebar-header svg{width:22px;height:22px;}
+#sidebar .sidebar-header span{font-weight:700;}
+#sidebar .sidebar-actions{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);}
+#file-graph{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:8px;}
+
+.node-card{
+  position:relative;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;
+  padding:8px 10px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;
+  transition:border-color .15s, box-shadow .15s, transform .1s;
+}
+.node-card:hover{border-color:var(--accent-3);transform:translateX(2px);}
+.node-card.active{border-color:var(--accent);box-shadow:var(--glow);}
+.node-card .node-icon{width:16px;height:16px;flex:0 0 auto;border-radius:4px;background:var(--accent-3);opacity:.85;}
+.node-card.folder .node-icon{background:var(--accent-2);}
+.node-card .node-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.node-children{margin-left:16px;padding-left:10px;border-left:1px dashed var(--border);display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+.node-group{display:flex;flex-direction:column;}
+
+#drop-zone-overlay{
+  position:fixed;inset:0;z-index:500;display:none;align-items:center;justify-content:center;
+  background:rgba(15,14,23,.85);border:3px dashed var(--accent);
+}
+#drop-zone-overlay.active{display:flex;}
+#drop-zone-overlay .drop-msg{font-size:22px;font-weight:700;color:var(--accent);text-shadow:var(--glow);}
+
+/* ---------- Main editor area ---------- */
+#main{flex:1 1 auto;display:flex;flex-direction:column;min-width:0;min-height:0;}
+#note-toolbar{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);
+  background:var(--bg-elevated);
+}
+#note-title{background:none;border:none;color:var(--text);font-size:16px;font-weight:600;flex:1;outline:none;}
+#panes{flex:1;display:flex;min-height:0;}
+.pane{flex:1;min-width:0;overflow:auto;padding:18px 24px;}
+#editor-pane textarea{
+  width:100%;height:100%;resize:none;background:transparent;border:none;color:var(--text);
+  font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;font-size:14px;line-height:1.65;outline:none;
+}
+#preview-pane{border-left:1px solid var(--border);}
+.markdown-body h1,.markdown-body h2,.markdown-body h3{border-bottom:1px solid var(--border);padding-bottom:6px;}
+.markdown-body hr{border:none;border-top:2px solid var(--accent-3);box-shadow:var(--glow);margin:20px 0;}
+.markdown-body mark{background:rgba(168,85,247,.35);color:var(--text);padding:0 2px;border-radius:3px;}
+.markdown-body .tag{background:var(--bg-card);border:1px solid var(--accent-3);color:var(--accent);border-radius:12px;padding:1px 8px;font-size:12px;}
+.markdown-body a.wikilink{color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--accent);}
+.markdown-body a.wikilink.is-unresolved{color:#f87171;border-bottom-color:#f87171;}
+.embed-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin:10px 0;}
+.embed-card img{max-width:100%;border-radius:6px;}
+.frontmatter-box{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--text-muted);}
+.frontmatter-box table{width:100%;border-collapse:collapse;}
+.frontmatter-box td{padding:2px 6px;vertical-align:top;}
+.callout{border-radius:8px;border-left:4px solid var(--accent-3);background:var(--bg-card);padding:8px 14px;margin:12px 0;}
+.callout .callout-title{font-weight:700;display:flex;align-items:center;gap:6px;cursor:pointer;}
+.callout .callout-content{margin-top:6px;}
+.callout.callout-note{border-left-color:var(--accent-3);}
+.callout.callout-info{border-left-color:#38bdf8;}
+.callout.callout-warning{border-left-color:#facc15;}
+.callout.callout-danger{border-left-color:#f87171;}
+.callout.callout-tip{border-left-color:#4ade80;}
+.callout.is-collapsed .callout-content{display:none;}
+.callout .fold-caret{transition:transform .15s;}
+.callout.is-collapsed .fold-caret{transform:rotate(-90deg);}
+.markdown-body input[type="checkbox"]{margin-right:6px;}
+
+/* ---------- AI panel ---------- */
+#ai-panel{
+  width:0;overflow:hidden;flex:0 0 auto;background:var(--bg-elevated);border-left:1px solid var(--border);
+  transition:width .2s ease;display:flex;flex-direction:column;min-height:0;
+}
+#ai-panel.open{width:320px;}
+#ai-panel .ai-header{padding:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-weight:700;}
+#ai-panel .ai-body{padding:12px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:10px;}
+#ai-panel select, #ai-panel textarea, #ai-panel input{
+  width:100%;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;font-size:13px;
+}
+#ai-output{white-space:pre-wrap;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;min-height:80px;font-size:13px;}
+.ai-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 860px){
+  #burger{display:inline-block;}
+  #sidebar{
+    position:absolute;left:0;top:0;bottom:0;transform:translateX(-100%);z-index:30;box-shadow:20px 0 40px rgba(0,0,0,.5);
+  }
+  #sidebar.open{transform:translateX(0);}
+  #ai-panel.open{position:absolute;right:0;top:0;bottom:0;z-index:30;width:88vw;max-width:340px;}
+  #panes{flex-direction:column;}
+  #preview-pane{border-left:none;border-top:1px solid var(--border);}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= AUTH OVERLAY ================= -->
+<div id="auth-overlay">
+  <div class="auth-card">
+    <svg class="auth-logo" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="bgGlowA" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#8a5cf6" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#0b0c10" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="facetDarkA" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#1e1b2e"/>
+          <stop offset="100%" stop-color="#0d0b14"/>
+        </linearGradient>
+        <linearGradient id="facetMidA" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#2d284d"/>
+          <stop offset="100%" stop-color="#171426"/>
+        </linearGradient>
+        <linearGradient id="facetGlowA" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#a855f7"/>
+          <stop offset="50%" stop-color="#6366f1"/>
+          <stop offset="100%" stop-color="#1e1b4b"/>
+        </linearGradient>
+        <linearGradient id="facetHighlightA" x1="100%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#c084fc"/>
+          <stop offset="100%" stop-color="#3b0764"/>
+        </linearGradient>
+        <linearGradient id="shineA" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/>
+          <stop offset="30%" stop-color="#ffffff" stop-opacity="0.0"/>
+        </linearGradient>
+      </defs>
+      <circle cx="256" cy="256" r="220" fill="url(#bgGlowA)"/>
+      <g>
+        <polygon points="256,40 380,150 420,340 256,470 92,340 132,150" fill="url(#facetDarkA)"/>
+        <polygon points="256,470 92,340 180,280 256,360" fill="url(#facetMidA)"/>
+        <polygon points="256,470 420,340 332,280 256,360" fill="url(#facetDarkA)"/>
+        <polygon points="132,150 180,280 256,220 220,80" fill="url(#facetGlowA)"/>
+        <polygon points="380,150 220,80 256,220 332,280" fill="url(#facetHighlightA)"/>
+        <polygon points="256,40 220,80 256,220 380,150" fill="url(#shineA)"/>
+        <polygon points="256,220 180,280 256,360 332,280" fill="#13111c"/>
+        <polyline points="256,40 220,80 256,220 256,360 256,470" stroke="#a855f7" stroke-width="1.5" fill="none" opacity="0.6"/>
+        <polyline points="132,150 256,220 380,150" stroke="#c084fc" stroke-width="1.5" fill="none" opacity="0.8"/>
+        <polyline points="180,280 256,220 332,280" stroke="#818cf8" stroke-width="1.5" fill="none" opacity="0.7"/>
+      </g>
+    </svg>
+    <h1>Bedrock</h1>
+    <p class="subtitle">Connexion sécurisée à votre Vault GitHub</p>
+    <form id="auth-form" autocomplete="off">
+      <div class="field">
+        <label for="auth-user">Nom d'utilisateur</label>
+        <input id="auth-user" type="text" autocomplete="off" required />
+      </div>
+      <div class="field">
+        <label for="auth-pass">Mot de passe</label>
+        <input id="auth-pass" type="password" autocomplete="off" required />
+      </div>
+      <div class="field">
+        <label for="auth-token">GitHub Personal Access Token (PAT)</label>
+        <input id="auth-token" type="password" autocomplete="off" required placeholder="ghp_..." />
+      </div>
+      <div class="field">
+        <label for="auth-repo">Dépôt (owner/repo)</label>
+        <input id="auth-repo" type="text" placeholder="MaximeVTB/Bedrock" required />
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input id="auth-remember" type="checkbox" style="width:auto;" checked />
+        <label for="auth-remember" style="margin:0;">Se souvenir de moi sur cet appareil</label>
+      </div>
+      <div class="auth-error" id="auth-error"></div>
+      <button class="btn full" type="submit">Déverrouiller Bedrock</button>
+    </form>
+  </div>
+</div>
+
+<!-- ================= DRAG & DROP OVERLAY ================= -->
+<div id="drop-zone-overlay"><div class="drop-msg">Déposez vos fichiers ici (image / PDF / .md)</div></div>
+
+<!-- ================= APP ================= -->
+<div id="app">
+  <div id="header">
+    <button id="burger" aria-label="Menu">☰</button>
+    <div class="brand">
+      <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <radialGradient id="bgGlowH" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#8a5cf6" stop-opacity="0.25"/>
+            <stop offset="100%" stop-color="#0b0c10" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="facetDarkH" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#1e1b2e"/><stop offset="100%" stop-color="#0d0b14"/>
+          </linearGradient>
+          <linearGradient id="facetMidH" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#2d284d"/><stop offset="100%" stop-color="#171426"/>
+          </linearGradient>
+          <linearGradient id="facetGlowH" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#6366f1"/><stop offset="100%" stop-color="#1e1b4b"/>
+          </linearGradient>
+          <linearGradient id="facetHighlightH" x1="100%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#c084fc"/><stop offset="100%" stop-color="#3b0764"/>
+          </linearGradient>
+          <linearGradient id="shineH" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.6"/><stop offset="30%" stop-color="#ffffff" stop-opacity="0.0"/>
+          </linearGradient>
+        </defs>
+        <circle cx="256" cy="256" r="220" fill="url(#bgGlowH)"/>
+        <g>
+          <polygon points="256,40 380,150 420,340 256,470 92,340 132,150" fill="url(#facetDarkH)"/>
+          <polygon points="256,470 92,340 180,280 256,360" fill="url(#facetMidH)"/>
+          <polygon points="256,470 420,340 332,280 256,360" fill="url(#facetDarkH)"/>
+          <polygon points="132,150 180,280 256,220 220,80" fill="url(#facetGlowH)"/>
+          <polygon points="380,150 220,80 256,220 332,280" fill="url(#facetHighlightH)"/>
+          <polygon points="256,40 220,80 256,220 380,150" fill="url(#shineH)"/>
+          <polygon points="256,220 180,280 256,360 332,280" fill="#13111c"/>
+          <polyline points="256,40 220,80 256,220 256,360 256,470" stroke="#a855f7" stroke-width="1.5" fill="none" opacity="0.6"/>
+          <polyline points="132,150 256,220 380,150" stroke="#c084fc" stroke-width="1.5" fill="none" opacity="0.8"/>
+          <polyline points="180,280 256,220 332,280" stroke="#818cf8" stroke-width="1.5" fill="none" opacity="0.7"/>
+        </g>
+      </svg>
+      <span>Bedrock</span>
+    </div>
+    <div class="header-actions">
+      <button id="ai-toggle">✦ Bedrock AI</button>
+      <button id="logout-btn" class="btn ghost small">Déconnexion</button>
+    </div>
+    <div id="sync-indicator"><span class="dot"></span><span id="sync-label">Synchronisé</span></div>
+  </div>
+
+  <div id="body-row">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <span>🗂️ Vault</span>
+      </div>
+      <div class="sidebar-actions">
+        <button id="new-note-btn" class="btn small full">+ Nouvelle note</button>
+        <button id="refresh-tree-btn" class="btn ghost small">⟳</button>
+      </div>
+      <div id="file-graph"><div style="color:var(--text-muted);font-size:12px;padding:8px;">Chargement du Vault…</div></div>
+    </aside>
+
+    <main id="main">
+      <div id="note-toolbar">
+        <input id="note-title" type="text" placeholder="Titre de la note" />
+      </div>
+      <div id="panes">
+        <div class="pane" id="editor-pane"><textarea id="editor" spellcheck="false" placeholder="Écrivez votre note en Markdown…"></textarea></div>
+        <div class="pane markdown-body" id="preview-pane"></div>
+      </div>
+    </main>
+
+    <aside id="ai-panel">
+      <div class="ai-header">✦ Bedrock AI Copilot</div>
+      <div class="ai-body">
+        <div class="field">
+          <label>Fournisseur</label>
+          <select id="ai-provider">
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="local">Local (endpoint custom)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Clé API / Endpoint</label>
+          <input id="ai-key" type="password" placeholder="sk-... ou http://localhost:11434" />
+        </div>
+        <div class="ai-actions">
+          <button class="btn small" data-ai-action="analyze">Analyser</button>
+          <button class="btn small" data-ai-action="summarize">Résumer</button>
+          <button class="btn small" data-ai-action="rephrase">Reformuler</button>
+          <button class="btn small" data-ai-action="generate">Générer suite</button>
+          <button class="btn small" data-ai-action="link" style="grid-column:1 / -1;">Suggérer des [[Wikilinks]]</button>
+        </div>
+        <div id="ai-output">Le résultat de l'IA apparaîtra ici. Vous pourrez l'insérer dans la note.</div>
+        <button id="ai-insert-btn" class="btn ghost full">Insérer dans l'éditeur</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script type="module">
+import { Octokit } from "https://esm.sh/@octokit/rest@20?bundle";
+
+/* =========================================================================
+ * BEDROCK — clone web d'Obsidian, sans backend, propulsé par l'API GitHub.
+ * Toute la configuration ci-dessous est intentionnellement simple : ce
+ * fichier unique est destiné à un usage personnel hébergé sur GitHub Pages.
+ * ========================================================================= */
+
+const AUTH_USERNAME = "MXXYO";
+const AUTH_PASSWORD = "MXXYO";
+const STORAGE_KEY = "bedrock.session.v1";
+const AI_KEY_STORAGE = "bedrock.ai.v1";
+const AUTOSAVE_DEBOUNCE_MS = 2000;
+
+const els = {
+  authOverlay: document.getElementById("auth-overlay"),
+  authForm: document.getElementById("auth-form"),
+  authError: document.getElementById("auth-error"),
+  app: document.getElementById("app"),
+  sidebar: document.getElementById("sidebar"),
+  fileGraph: document.getElementById("file-graph"),
+  burger: document.getElementById("burger"),
+  editor: document.getElementById("editor"),
+  preview: document.getElementById("preview-pane"),
+  noteTitle: document.getElementById("note-title"),
+  syncIndicator: document.getElementById("sync-indicator"),
+  syncLabel: document.getElementById("sync-label"),
+  aiPanel: document.getElementById("ai-panel"),
+  aiToggle: document.getElementById("ai-toggle"),
+  aiOutput: document.getElementById("ai-output"),
+  aiKey: document.getElementById("ai-key"),
+  aiProvider: document.getElementById("ai-provider"),
+  aiInsertBtn: document.getElementById("ai-insert-btn"),
+  dropOverlay: document.getElementById("drop-zone-overlay"),
+  newNoteBtn: document.getElementById("new-note-btn"),
+  refreshTreeBtn: document.getElementById("refresh-tree-btn"),
+  logoutBtn: document.getElementById("logout-btn"),
+};
+
+/* ------------------------------------------------------------------ *
+ * Session / Auth
+ * ------------------------------------------------------------------ */
+const Session = {
+  load() {
+    const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  },
+  save(data, remember) {
+    const raw = JSON.stringify(data);
+    if (remember) {
+      localStorage.setItem(STORAGE_KEY, raw);
+    } else {
+      sessionStorage.setItem(STORAGE_KEY, raw);
+    }
+  },
+  clear() {
+    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
+  },
+};
+
+let state = {
+  token: null,
+  owner: null,
+  repo: null,
+  octokit: null,
+  tree: [],
+  currentPath: null,
+  currentSha: null,
+  vaultFiles: [], // flat list of {path, name}
+};
+
+function setSyncStatus(status, label) {
+  els.syncIndicator.classList.remove("syncing", "error");
+  if (status === "syncing") els.syncIndicator.classList.add("syncing");
+  if (status === "error") els.syncIndicator.classList.add("error");
+  els.syncLabel.textContent = label || (status === "syncing" ? "Synchronisation en cours…" : status === "error" ? "Erreur de synchronisation" : "Synchronisé");
+}
+
+async function boot() {
+  const session = Session.load();
+  if (session && session.token && session.owner && session.repo) {
+    try {
+      await connectGitHub(session.owner, session.repo, session.token);
+      showApp();
+      return;
+    } catch (e) {
+      console.warn("Session invalide, ré-authentification requise.", e);
+      Session.clear();
+    }
+  }
+  els.authOverlay.classList.remove("hidden");
+}
+
+function showApp() {
+  els.authOverlay.classList.add("hidden");
+  els.app.classList.add("visible");
+  loadVaultTree();
+}
+
+els.authForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  els.authError.textContent = "";
+  const user = document.getElementById("auth-user").value.trim();
+  const pass = document.getElementById("auth-pass").value;
+  const token = document.getElementById("auth-token").value.trim();
+  const repoFull = document.getElementById("auth-repo").value.trim();
+  const remember = document.getElementById("auth-remember").checked;
+
+  if (user !== AUTH_USERNAME || pass !== AUTH_PASSWORD) {
+    els.authError.textContent = "Identifiants invalides.";
+    return;
+  }
+  const parts = repoFull.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    els.authError.textContent = "Format de dépôt invalide (attendu: owner/repo).";
+    return;
+  }
+  const [owner, repo] = parts;
+  try {
+    await connectGitHub(owner, repo, token);
+    Session.save({ token, owner, repo }, remember);
+    showApp();
+  } catch (err) {
+    console.error(err);
+    els.authError.textContent = "Impossible de se connecter au dépôt GitHub. Vérifiez le PAT et le nom du dépôt.";
+  }
+});
+
+async function connectGitHub(owner, repo, token) {
+  const octokit = new Octokit({ auth: token });
+  // Validate access early.
+  await octokit.repos.get({ owner, repo });
+  state.octokit = octokit;
+  state.owner = owner;
+  state.repo = repo;
+  state.token = token;
+}
+
+els.logoutBtn.addEventListener("click", () => {
+  Session.clear();
+  location.reload();
+});
+
+/* ------------------------------------------------------------------ *
+ * Vault tree (graph/node style) via GitHub Git Trees API
+ * ------------------------------------------------------------------ */
+async function loadVaultTree() {
+  els.fileGraph.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding:8px;">Chargement du Vault…</div>';
+  try {
+    const { data: repoData } = await state.octokit.repos.get({ owner: state.owner, repo: state.repo });
+    const branch = repoData.default_branch;
+    const { data: refData } = await state.octokit.git.getRef({ owner: state.owner, repo: state.repo, ref: `heads/${branch}` });
+    const { data: treeData } = await state.octokit.git.getTree({
+      owner: state.owner, repo: state.repo, tree_sha: refData.object.sha, recursive: "true",
+    });
+    state.defaultBranch = branch;
+    const mdFiles = treeData.tree.filter((t) => t.type === "blob" && /\.md$/i.test(t.path));
+    state.vaultFiles = mdFiles.map((f) => ({ path: f.path, name: f.path.split("/").pop().replace(/\.md$/i, "") }));
+    const structure = buildFolderStructure(mdFiles.map((f) => f.path));
+    renderFileGraph(structure);
+  } catch (err) {
+    console.error(err);
+    els.fileGraph.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px;">Erreur de chargement du Vault.</div>';
+  }
+}
+
+function buildFolderStructure(paths) {
+  const root = { type: "folder", name: "/", children: {}, files: [] };
+  for (const path of paths) {
+    const segments = path.split("/");
+    let node = root;
+    for (let i = 0; i < segments.length - 1; i++) {
+      const seg = segments[i];
+      node.children[seg] = node.children[seg] || { type: "folder", name: seg, children: {}, files: [] };
+      node = node.children[seg];
+    }
+    node.files.push({ type: "file", name: segments[segments.length - 1], path });
+  }
+  return root;
+}
+
+function renderFileGraph(node, container = els.fileGraph, isRoot = true) {
+  if (isRoot) container.innerHTML = "";
+  const group = document.createElement("div");
+  group.className = "node-group";
+
+  for (const key of Object.keys(node.children).sort()) {
+    const folder = node.children[key];
+    const card = document.createElement("div");
+    card.className = "node-card folder";
+    card.innerHTML = `<span class="node-icon"></span><span class="node-name">📁 ${escapeHtml(folder.name)}</span>`;
+    const childrenWrap = document.createElement("div");
+    childrenWrap.className = "node-children";
+    childrenWrap.style.display = "none";
+    card.addEventListener("click", () => {
+      childrenWrap.style.display = childrenWrap.style.display === "none" ? "flex" : "none";
+    });
+    group.appendChild(card);
+    group.appendChild(childrenWrap);
+    renderFileGraph(folder, childrenWrap, false);
+  }
+
+  for (const file of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
+    const card = document.createElement("div");
+    card.className = "node-card file";
+    card.dataset.path = file.path;
+    card.innerHTML = `<span class="node-icon"></span><span class="node-name">📝 ${escapeHtml(file.name.replace(/\.md$/i, ""))}</span>`;
+    card.addEventListener("click", () => openNote(file.path));
+    group.appendChild(card);
+  }
+
+  if (isRoot) container.appendChild(group);
+  return container;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+els.refreshTreeBtn.addEventListener("click", loadVaultTree);
+
+/* ------------------------------------------------------------------ *
+ * Note editing & GitHub content API
+ * ------------------------------------------------------------------ */
+async function openNote(path) {
+  try {
+    const { data } = await state.octokit.repos.getContent({ owner: state.owner, repo: state.repo, path });
+    const content = decodeBase64Utf8(data.content);
+    state.currentPath = path;
+    state.currentSha = data.sha;
+    els.noteTitle.value = path.split("/").pop().replace(/\.md$/i, "");
+    els.editor.value = content;
+    renderPreview(content);
+    highlightActiveNode(path);
+    closeSidebarOnMobile();
+  } catch (err) {
+    console.error(err);
+    alert("Impossible d'ouvrir la note.");
+  }
+}
+
+function highlightActiveNode(path) {
+  document.querySelectorAll(".node-card.file").forEach((el) => {
+    el.classList.toggle("active", el.dataset.path === path);
+  });
+}
+
+function decodeBase64Utf8(b64) {
+  const binary = atob(b64.replace(/\n/g, ""));
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+function encodeUtf8Base64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  bytes.forEach((b) => (binary += String.fromCharCode(b)));
+  return btoa(binary);
+}
+
+els.newNoteBtn.addEventListener("click", async () => {
+  const name = prompt("Nom de la nouvelle note :", "Nouvelle note");
+  if (!name) return;
+  const path = `${name.trim()}.md`;
+  state.currentPath = path;
+  state.currentSha = null;
+  els.noteTitle.value = name.trim();
+  els.editor.value = `# ${name.trim()}\n\n`;
+  renderPreview(els.editor.value);
+  scheduleAutosave();
+});
+
+let autosaveTimer = null;
+function scheduleAutosave() {
+  if (!state.currentPath) return;
+  setSyncStatus("syncing");
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(commitCurrentNote, AUTOSAVE_DEBOUNCE_MS);
+}
+
+async function commitCurrentNote() {
+  if (!state.currentPath || !state.octokit) return;
+  try {
+    setSyncStatus("syncing");
+    const content = els.editor.value;
+    const params = {
+      owner: state.owner,
+      repo: state.repo,
+      path: state.currentPath,
+      message: `Bedrock: update ${state.currentPath}`,
+      content: encodeUtf8Base64(content),
+    };
+    if (state.currentSha) params.sha = state.currentSha;
+    const { data } = await state.octokit.repos.createOrUpdateFileContents(params);
+    state.currentSha = data.content.sha;
+    setSyncStatus("ok", "Synchronisé");
+    if (!state.vaultFiles.find((f) => f.path === state.currentPath)) {
+      state.vaultFiles.push({ path: state.currentPath, name: state.currentPath.replace(/\.md$/i, "") });
+      loadVaultTree();
+    }
+  } catch (err) {
+    console.error(err);
+    setSyncStatus("error", "Erreur de synchronisation");
+  }
+}
+
+els.editor.addEventListener("input", () => {
+  renderPreview(els.editor.value);
+  scheduleAutosave();
+});
+
+els.noteTitle.addEventListener("change", () => {
+  if (!state.currentPath) return;
+  const dir = state.currentPath.includes("/") ? state.currentPath.slice(0, state.currentPath.lastIndexOf("/") + 1) : "";
+  const newPath = `${dir}${els.noteTitle.value.trim()}.md`;
+  if (newPath !== state.currentPath) {
+    state.currentPath = newPath;
+    state.currentSha = null; // will be created as a new file
+    scheduleAutosave();
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Sidebar / responsive burger
+ * ------------------------------------------------------------------ */
+els.burger.addEventListener("click", () => {
+  els.sidebar.classList.toggle("open");
+});
+function closeSidebarOnMobile() {
+  if (window.innerWidth <= 860) els.sidebar.classList.remove("open");
+}
+
+els.aiToggle.addEventListener("click", () => {
+  els.aiPanel.classList.toggle("open");
+});
+
+/* ------------------------------------------------------------------ *
+ * Drag & drop uploads (images, PDFs, markdown)
+ * ------------------------------------------------------------------ */
+let dragCounter = 0;
+window.addEventListener("dragenter", (e) => {
+  if (!state.octokit) return;
+  e.preventDefault();
+  dragCounter++;
+  els.dropOverlay.classList.add("active");
+});
+window.addEventListener("dragleave", (e) => {
+  dragCounter = Math.max(0, dragCounter - 1);
+  if (dragCounter === 0) els.dropOverlay.classList.remove("active");
+});
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  els.dropOverlay.classList.remove("active");
+  if (!state.octokit || !e.dataTransfer.files.length) return;
+  for (const file of Array.from(e.dataTransfer.files)) {
+    await uploadFileAndEmbed(file);
+  }
+});
+
+async function uploadFileAndEmbed(file) {
+  try {
+    setSyncStatus("syncing", "Téléversement en cours…");
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    bytes.forEach((b) => (binary += String.fromCharCode(b)));
+    const base64 = btoa(binary);
+    const folder = "attachments";
+    const path = `${folder}/${Date.now()}-${file.name}`;
+    await state.octokit.repos.createOrUpdateFileContents({
+      owner: state.owner,
+      repo: state.repo,
+      path,
+      message: `Bedrock: upload ${file.name}`,
+      content: base64,
+    });
+    insertAtCursor(els.editor, `\n![[${file.name}]]\n`);
+    renderPreview(els.editor.value);
+    scheduleAutosave();
+    setSyncStatus("ok", "Synchronisé");
+  } catch (err) {
+    console.error(err);
+    setSyncStatus("error", "Erreur de téléversement");
+  }
+}
+
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? textarea.value.length;
+  textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
+  textarea.selectionStart = textarea.selectionEnd = start + text.length;
+}
+
+/* ------------------------------------------------------------------ *
+ * Obsidian-flavored Markdown live preview engine
+ * ------------------------------------------------------------------ */
+marked.setOptions({ breaks: true, gfm: true });
+
+function renderPreview(raw) {
+  const { frontmatter, body } = extractFrontmatter(raw);
+  let text = stripHiddenComments(body);
+  text = processCallouts(text);
+  text = processWikilinksAndEmbeds(text);
+  text = processHighlightsAndTags(text);
+
+  let html = marked.parse(text);
+  const frontmatterHtml = frontmatter ? renderFrontmatterBox(frontmatter) : "";
+  els.preview.innerHTML = frontmatterHtml + html;
+
+  try {
+    if (window.mermaid) {
+      window.mermaid.initialize({ startOnLoad: false, theme: "dark" });
+      const blocks = els.preview.querySelectorAll("pre code.language-mermaid");
+      blocks.forEach((block, i) => {
+        const id = `mermaid-${Date.now()}-${i}`;
+        const div = document.createElement("div");
+        div.className = "mermaid";
+        div.id = id;
+        div.textContent = block.textContent;
+        block.closest("pre").replaceWith(div);
+      });
+      if (blocks.length) window.mermaid.run({ nodes: els.preview.querySelectorAll(".mermaid") });
+    }
+  } catch (e) { console.warn("Mermaid render error", e); }
+
+  try {
+    if (window.renderMathInElement) {
+      window.renderMathInElement(els.preview, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false },
+        ],
+      });
+    }
+  } catch (e) { console.warn("KaTeX render error", e); }
+
+  wireCalloutFolding();
+  wireCheckboxes();
+  wireWikilinkClicks();
+}
+
+function extractFrontmatter(raw) {
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+  if (!match) return { frontmatter: null, body: raw };
+  const yamlBlock = match[1];
+  const body = raw.slice(match[0].length);
+  const frontmatter = {};
+  yamlBlock.split("\n").forEach((line) => {
+    const kv = /^([^:]+):\s*(.*)$/.exec(line);
+    if (kv) frontmatter[kv[1].trim()] = kv[2].trim();
+  });
+  return { frontmatter, body };
+}
+
+function renderFrontmatterBox(fm) {
+  const rows = Object.entries(fm).map(([k, v]) => `<tr><td><strong>${escapeHtml(k)}</strong></td><td>${escapeHtml(v)}</td></tr>`).join("");
+  return `<div class="frontmatter-box"><table>${rows}</table></div>`;
+}
+
+function stripHiddenComments(text) {
+  return text.replace(/%%[\s\S]*?%%/g, "");
+}
+
+function processHighlightsAndTags(text) {
+  text = text.replace(/==([^=\n]+)==/g, "<mark>$1</mark>");
+  text = text.replace(/(^|\s)#([a-zA-Z0-9_\-\/]+)/g, (m, pre, tag) => `${pre}<span class="tag">#${tag}</span>`);
+  return text;
+}
+
+function resolveNoteExists(name) {
+  const target = name.toLowerCase();
+  return state.vaultFiles.some((f) => f.name.toLowerCase() === target || f.path.toLowerCase() === `${target}.md`);
+}
+
+function processWikilinksAndEmbeds(text) {
+  // Embeds ![[Target]] (images, pdf, or note transclusion)
+  text = text.replace(/!\[\[([^\]]+)\]\]/g, (m, inner) => {
+    const target = inner.trim();
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(target)) {
+      return `<div class="embed-card"><img src="attachments/${escapeHtml(target)}" alt="${escapeHtml(target)}" /></div>`;
+    }
+    if (/\.pdf$/i.test(target)) {
+      return `<div class="embed-card">📄 <a href="attachments/${escapeHtml(target)}" target="_blank">${escapeHtml(target)}</a></div>`;
+    }
+    return `<div class="embed-card">🔗 Incrustation de note : <strong>${escapeHtml(target)}</strong></div>`;
+  });
+
+  // Wikilinks [[Target]], [[Target|Alias]], [[Target#Header]]
+  text = text.replace(/\[\[([^\]|#]+)(#[^\]|]+)?(\|([^\]]+))?\]\]/g, (m, name, header, _alias, alias) => {
+    const cleanName = name.trim();
+    const label = (alias || cleanName + (header || "")).trim();
+    const resolved = resolveNoteExists(cleanName);
+    const cls = resolved ? "wikilink" : "wikilink is-unresolved";
+    return `<a href="#" class="${cls}" data-wikilink="${escapeHtml(cleanName)}">${escapeHtml(label)}</a>`;
+  });
+
+  return text;
+}
+
+const CALLOUT_RE = /^>\s*\[!(\w+)\](-)?\s*(.*)\n((?:>.*\n?)*)/;
+function processCallouts(text) {
+  const lines = text.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const headerMatch = /^>\s*\[!(\w+)\](-)?\s*(.*)$/.exec(lines[i]);
+    if (headerMatch) {
+      const [, type, foldMark, title] = headerMatch;
+      const bodyLines = [];
+      let j = i + 1;
+      while (j < lines.length && /^>/.test(lines[j])) {
+        bodyLines.push(lines[j].replace(/^>\s?/, ""));
+        j++;
+      }
+      const innerHtml = marked.parse(bodyLines.join("\n"));
+      const collapsed = foldMark === "-" ? "is-collapsed" : "";
+      const displayTitle = title && title.trim() ? title.trim() : type.charAt(0).toUpperCase() + type.slice(1);
+      out.push(
+        `<div class="callout callout-${escapeHtml(type.toLowerCase())} ${collapsed}" data-foldable="${foldMark ? "1" : "0"}">` +
+          `<div class="callout-title"><span class="fold-caret">${foldMark ? "▾" : ""}</span> ${escapeHtml(displayTitle)}</div>` +
+          `<div class="callout-content">${innerHtml}</div>` +
+        `</div>`
+      );
+      i = j;
+    } else {
+      out.push(lines[i]);
+      i++;
+    }
+  }
+  return out.join("\n");
+}
+
+function wireCalloutFolding() {
+  els.preview.querySelectorAll(".callout[data-foldable='1'] .callout-title").forEach((titleEl) => {
+    titleEl.onclick = () => titleEl.closest(".callout").classList.toggle("is-collapsed");
+  });
+}
+
+function wireCheckboxes() {
+  els.preview.querySelectorAll('li input[type="checkbox"]').forEach((cb, idx) => {
+    cb.disabled = false;
+    cb.addEventListener("change", () => {
+      toggleCheckboxInSource(idx, cb.checked);
+    });
+  });
+}
+
+function toggleCheckboxInSource(taskIndex, checked) {
+  let count = -1;
+  const updated = els.editor.value.replace(/^(\s*[-*]\s\[)([ xX])(\]\s.*)$/gm, (m, pre, mark, post) => {
+    count++;
+    if (count === taskIndex) return `${pre}${checked ? "x" : " "}${post}`;
+    return m;
+  });
+  els.editor.value = updated;
+  scheduleAutosave();
+}
+
+function wireWikilinkClicks() {
+  els.preview.querySelectorAll("a.wikilink").forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const name = a.dataset.wikilink;
+      const found = state.vaultFiles.find((f) => f.name.toLowerCase() === name.toLowerCase());
+      if (found) {
+        openNote(found.path);
+      } else if (confirm(`La note "${name}" n'existe pas encore. La créer ?`)) {
+        state.currentPath = `${name}.md`;
+        state.currentSha = null;
+        els.noteTitle.value = name;
+        els.editor.value = `# ${name}\n\n`;
+        renderPreview(els.editor.value);
+        scheduleAutosave();
+      }
+    });
+  });
+}
+
+/* Instant horizontal rule rendering: when the user types "---" then Enter,
+   the preview pane (re-rendered on every keystroke) already reflects the
+   separator immediately via marked's thematic-break handling. */
+
+/* ------------------------------------------------------------------ *
+ * Bedrock AI Copilot
+ * ------------------------------------------------------------------ */
+function loadAiSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AI_KEY_STORAGE) || "{}");
+    if (saved.provider) els.aiProvider.value = saved.provider;
+    if (saved.key) els.aiKey.value = saved.key;
+  } catch { /* ignore */ }
+}
+function saveAiSettings() {
+  localStorage.setItem(AI_KEY_STORAGE, JSON.stringify({ provider: els.aiProvider.value, key: els.aiKey.value }));
+}
+els.aiProvider.addEventListener("change", saveAiSettings);
+els.aiKey.addEventListener("change", saveAiSettings);
+loadAiSettings();
+
+document.querySelectorAll("[data-ai-action]").forEach((btn) => {
+  btn.addEventListener("click", () => runAiAction(btn.dataset.aiAction));
+});
+
+async function runAiAction(action) {
+  const key = els.aiKey.value.trim();
+  const provider = els.aiProvider.value;
+  const note = els.editor.value;
+  if (!key) {
+    els.aiOutput.textContent = "Veuillez renseigner une clé API / endpoint pour utiliser Bedrock AI.";
+    return;
+  }
+
+  let prompt;
+  if (action === "analyze") prompt = `Analyse la note suivante et fournis des observations clés :\n\n${note}`;
+  else if (action === "summarize") prompt = `Résume la note suivante de façon concise :\n\n${note}`;
+  else if (action === "rephrase") prompt = `Reformule la note suivante en gardant le même sens :\n\n${note}`;
+  else if (action === "generate") prompt = `Continue et développe le contenu suivant :\n\n${note}`;
+  else if (action === "link") {
+    const existing = state.vaultFiles.map((f) => f.name).join(", ");
+    prompt = `Voici la liste des notes existantes du Vault : ${existing}.\nPropose des [[Wikilinks]] pertinents à ajouter dans la note suivante, en te basant uniquement sur les notes existantes :\n\n${note}`;
+  }
+
+  els.aiOutput.textContent = "Interrogation de l'IA…";
+  try {
+    const result = await callAiProvider(provider, key, prompt);
+    els.aiOutput.textContent = result;
+  } catch (err) {
+    console.error(err);
+    els.aiOutput.textContent = `Erreur lors de l'appel IA : ${err.message}`;
+  }
+}
+
+async function callAiProvider(provider, key, prompt) {
+  if (provider === "openai") {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || "Erreur OpenAI");
+    return data.choices?.[0]?.message?.content?.trim() || "(réponse vide)";
+  }
+  if (provider === "anthropic") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-3-5-sonnet-latest",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || "Erreur Anthropic");
+    return data.content?.[0]?.text?.trim() || "(réponse vide)";
+  }
+  // "local" — user-provided endpoint, expected to accept { prompt } and return { text }.
+  const res = await fetch(key, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error("Erreur endpoint local");
+  return data.text || data.response || JSON.stringify(data);
+}
+
+els.aiInsertBtn.addEventListener("click", () => {
+  const text = els.aiOutput.textContent;
+  if (!text) return;
+  insertAtCursor(els.editor, `\n${text}\n`);
+  renderPreview(els.editor.value);
+  scheduleAutosave();
+});
+
+/* ------------------------------------------------------------------ */
+boot();
+</script>
+</body>
+</html>
