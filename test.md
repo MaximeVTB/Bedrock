@@ -1,6 +1,6 @@
 # test
 
 hi 
-[!note]
+[!note]hi 
 
 ---
