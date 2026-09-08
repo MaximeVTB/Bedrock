@@ -114,7 +114,10 @@ button{font-family:inherit;}
 #sidebar .sidebar-header{padding:12px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border);}
 #sidebar .sidebar-header svg{width:22px;height:22px;}
 #sidebar .sidebar-header span{font-weight:700;}
-#sidebar .sidebar-actions{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);}
+#sidebar .sidebar-actions{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;border-bottom:1px solid var(--border);}
+#import-progress{padding:8px 10px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border);}
+#import-progress .import-errors{color:#f87171;margin-top:4px;white-space:pre-wrap;}
+.hidden{display:none !important;}
 #file-graph{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:8px;}
 
 .node-card{
@@ -339,7 +342,11 @@ button{font-family:inherit;}
       <div class="sidebar-actions">
         <button id="new-note-btn" class="btn small full">+ Nouvelle note</button>
         <button id="refresh-tree-btn" class="btn ghost small">⟳</button>
+        <button id="import-obsidian-btn" class="btn ghost small full">📥 Importer depuis Obsidian</button>
+        <input id="import-folder-input" type="file" webkitdirectory directory multiple style="display:none;" />
+        <input id="import-files-input" type="file" multiple accept=".md,text/markdown" style="display:none;" />
       </div>
+      <div id="import-progress" class="hidden"></div>
       <div id="file-graph"><div style="color:var(--text-muted);font-size:12px;padding:8px;">Chargement du Vault…</div></div>
     </aside>
 
@@ -419,6 +426,10 @@ const els = {
   newNoteBtn: document.getElementById("new-note-btn"),
   refreshTreeBtn: document.getElementById("refresh-tree-btn"),
   logoutBtn: document.getElementById("logout-btn"),
+  importObsidianBtn: document.getElementById("import-obsidian-btn"),
+  importFolderInput: document.getElementById("import-folder-input"),
+  importFilesInput: document.getElementById("import-files-input"),
+  importProgress: document.getElementById("import-progress"),
 };
 
 /* ------------------------------------------------------------------ *
@@ -453,6 +464,7 @@ let state = {
   currentPath: null,
   currentSha: null,
   vaultFiles: [], // flat list of {path, name}
+  pathShaMap: {}, // path -> blob sha, for every file in the repo tree
 };
 
 function setSyncStatus(status, label) {
@@ -585,6 +597,10 @@ async function loadVaultTree() {
       owner: state.owner, repo: state.repo, tree_sha: refData.object.sha, recursive: "true",
     });
     state.defaultBranch = branch;
+    state.pathShaMap = {};
+    for (const entry of treeData.tree) {
+      if (entry.type === "blob") state.pathShaMap[entry.path] = entry.sha;
+    }
     const mdFiles = treeData.tree.filter((t) => t.type === "blob" && /\.md$/i.test(t.path));
     state.vaultFiles = mdFiles.map((f) => ({ path: f.path, name: f.path.split("/").pop().replace(/\.md$/i, "") }));
     const structure = buildFolderStructure(mdFiles.map((f) => f.path));
@@ -709,21 +725,36 @@ function scheduleAutosave() {
   autosaveTimer = setTimeout(commitCurrentNote, AUTOSAVE_DEBOUNCE_MS);
 }
 
+/**
+ * Shared helper to write a file's content (text or already-base64) to the
+ * GitHub-backed vault via the Contents API. Looks up an existing sha from
+ * state.pathShaMap when not explicitly provided, so callers correctly
+ * update existing files instead of always creating new ones.
+ */
+async function commitFile(path, content, opts = {}) {
+  const { isBase64 = false, message, sha } = opts;
+  const params = {
+    owner: state.owner,
+    repo: state.repo,
+    path,
+    message: message || `Bedrock: update ${path}`,
+    content: isBase64 ? content : encodeUtf8Base64(content),
+  };
+  const existingSha = sha !== undefined ? sha : state.pathShaMap[path];
+  if (existingSha) params.sha = existingSha;
+  const { data } = await state.octokit.repos.createOrUpdateFileContents(params);
+  state.pathShaMap[path] = data.content.sha;
+  return data;
+}
+
 async function commitCurrentNote() {
   if (!state.currentPath || !state.octokit) return;
   try {
     setSyncStatus("syncing");
     const content = els.editor.value;
-    const params = {
-      owner: state.owner,
-      repo: state.repo,
-      path: state.currentPath,
-      message: `Bedrock: update ${state.currentPath}`,
-      content: encodeUtf8Base64(content),
-    };
-    if (state.currentSha) params.sha = state.currentSha;
-    const { data } = await state.octokit.repos.createOrUpdateFileContents(params);
+    const data = await commitFile(state.currentPath, content, { sha: state.currentSha });
     state.currentSha = data.content.sha;
+    state.pathShaMap[state.currentPath] = data.content.sha;
     setSyncStatus("ok", "Synchronisé");
     if (!state.vaultFiles.find((f) => f.path === state.currentPath)) {
       state.vaultFiles.push({ path: state.currentPath, name: state.currentPath.replace(/\.md$/i, "") });
@@ -793,20 +824,10 @@ window.addEventListener("drop", async (e) => {
 async function uploadFileAndEmbed(file) {
   try {
     setSyncStatus("syncing", "Téléversement en cours…");
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = "";
-    bytes.forEach((b) => (binary += String.fromCharCode(b)));
-    const base64 = btoa(binary);
+    const base64 = await fileToBase64(file);
     const folder = "attachments";
     const path = `${folder}/${Date.now()}-${file.name}`;
-    await state.octokit.repos.createOrUpdateFileContents({
-      owner: state.owner,
-      repo: state.repo,
-      path,
-      message: `Bedrock: upload ${file.name}`,
-      content: base64,
-    });
+    await commitFile(path, base64, { isBase64: true, message: `Bedrock: upload ${file.name}` });
     insertAtCursor(els.editor, `\n![[${file.name}]]\n`);
     renderPreview(els.editor.value);
     scheduleAutosave();
@@ -822,6 +843,89 @@ function insertAtCursor(textarea, text) {
   const end = textarea.selectionEnd ?? textarea.value.length;
   textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
   textarea.selectionStart = textarea.selectionEnd = start + text.length;
+}
+
+function fileToBase64(file) {
+  return file.arrayBuffer().then((arrayBuffer) => {
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    bytes.forEach((b) => (binary += String.fromCharCode(b)));
+    return btoa(binary);
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Import from Obsidian (bulk folder/file import)
+ * ------------------------------------------------------------------ */
+function relativePathOf(file) {
+  // webkitRelativePath preserves the folder structure when a whole
+  // directory is picked; fall back to the plain file name otherwise.
+  return file.webkitRelativePath || file.name;
+}
+
+els.importObsidianBtn.addEventListener("click", () => {
+  if (!state.octokit) return;
+  // Prefer the folder picker when supported by the browser/OS.
+  if ("webkitdirectory" in document.createElement("input")) {
+    els.importFolderInput.click();
+  } else {
+    els.importFilesInput.click();
+  }
+});
+
+els.importFolderInput.addEventListener("change", (e) => {
+  importFiles(Array.from(e.target.files));
+  e.target.value = "";
+});
+els.importFilesInput.addEventListener("change", (e) => {
+  importFiles(Array.from(e.target.files));
+  e.target.value = "";
+});
+
+function setImportProgress(text) {
+  if (!text) {
+    els.importProgress.classList.add("hidden");
+    els.importProgress.innerHTML = "";
+    return;
+  }
+  els.importProgress.classList.remove("hidden");
+  els.importProgress.textContent = text;
+}
+
+async function importFiles(files) {
+  if (!files.length || !state.octokit) return;
+  const errors = [];
+  let done = 0;
+  setSyncStatus("syncing", "Import en cours…");
+  for (const file of files) {
+    const path = relativePathOf(file);
+    done++;
+    setImportProgress(`Import ${done}/${files.length} — ${path}`);
+    try {
+      if (/\.md$/i.test(file.name)) {
+        const content = await file.text();
+        await commitFile(path, content, { message: `Bedrock: import ${path}` });
+      } else {
+        const base64 = await fileToBase64(file);
+        await commitFile(path, base64, { isBase64: true, message: `Bedrock: import ${path}` });
+      }
+    } catch (err) {
+      console.error(err);
+      errors.push(`${path}: ${err.message || err}`);
+    }
+  }
+  if (errors.length) {
+    setImportProgress("");
+    els.importProgress.classList.remove("hidden");
+    els.importProgress.innerHTML = `Import terminé avec ${errors.length} erreur(s) sur ${files.length} fichier(s).` +
+      `<div class="import-errors">${errors.map((e) => escapeHtml(e)).join("\n")}</div>`;
+    setSyncStatus("error", "Erreur d'import");
+  } else {
+    setImportProgress(`Import terminé : ${files.length} fichier(s) synchronisé(s).`);
+    setSyncStatus("ok", "Synchronisé");
+    setTimeout(() => setImportProgress(""), 5000);
+  }
+  await loadVaultTree();
 }
 
 /* ------------------------------------------------------------------ *
