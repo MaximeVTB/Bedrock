@@ -383,7 +383,6 @@ button{font-family:inherit;}
 </div>
 
 <script type="module">
-import { Octokit } from "https://esm.sh/@octokit/rest@20?bundle";
 
 /* =========================================================================
  * BEDROCK — clone web d'Obsidian, sans backend, propulsé par l'API GitHub.
@@ -513,8 +512,53 @@ els.authForm.addEventListener("submit", async (e) => {
   }
 });
 
+class GitHubClient {
+  constructor(token) {
+    this.token = token;
+    this.repos = {
+      get: (params) => this.request(`/repos/${params.owner}/${params.repo}`),
+      getContent: (params) => this.request(`/repos/${params.owner}/${params.repo}/contents/${this.encodePath(params.path)}`),
+      createOrUpdateFileContents: (params) => this.request(
+        `/repos/${params.owner}/${params.repo}/contents/${this.encodePath(params.path)}`,
+        { method: "PUT", body: params },
+      ),
+    };
+    this.git = {
+      getRef: (params) => this.request(
+        `/repos/${params.owner}/${params.repo}/git/ref/${this.encodePath(params.ref)}`,
+      ),
+      getTree: (params) => this.request(
+        `/repos/${params.owner}/${params.repo}/git/trees/${params.tree_sha}?recursive=${params.recursive}`,
+      ),
+    };
+  }
+
+  encodePath(path) {
+    return path.split("/").map(encodeURIComponent).join("/");
+  }
+
+  async request(path, options = {}) {
+    const response = await fetch(`https://api.github.com${path}`, {
+      ...options,
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: "Bearer " + this.token,
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`GitHub API ${response.status}: ${data.message || response.statusText}`);
+    }
+    return { data };
+  }
+}
+
 async function connectGitHub(owner, repo, token) {
-  const octokit = new Octokit({ auth: token });
+  const octokit = new GitHubClient(token);
   // Validate access early.
   await octokit.repos.get({ owner, repo });
   state.octokit = octokit;
